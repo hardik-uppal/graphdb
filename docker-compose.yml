@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_HOST=host.docker.internal  # Connect to host PostgreSQL
+      - DB_PORT=5432
+      - DB_NAME=transaction_analytics
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./scotiabank.csv:/app/scotiabank.csv:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
