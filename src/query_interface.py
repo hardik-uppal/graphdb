@@ -1,5 +1,6 @@
 import openai
 import json
+import logging
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, asc
@@ -9,6 +10,19 @@ from .config import Config
 from .models import Transaction, TransactionCluster
 from .embedding_service import EmbeddingService
 from .graph_service import GraphService
+
+# Set up logging for OpenAI API calls
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create a separate logger for OpenAI API interactions
+api_logger = logging.getLogger('openai_api')
+api_handler = logging.FileHandler('openai_api.log')
+api_handler.setLevel(logging.INFO)
+api_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+api_handler.setFormatter(api_formatter)
+api_logger.addHandler(api_handler)
+api_logger.setLevel(logging.INFO)
 
 class QueryInterface:
     def __init__(self):
@@ -124,24 +138,59 @@ class QueryInterface:
         print(f"Processing query: {query}")
         
         try:
+            # Prepare the chat completion request
+            messages = [
+                {
+                    "role": "system",
+                    "content": """You are a financial data analyst. Given a user query about transaction data, 
+                    determine which function to call with appropriate parameters. 
+                    Always provide exact parameter values, don't use placeholders."""
+                },
+                {"role": "user", "content": query}
+            ]
+            
+            # Log the request
+            api_logger.info(f"CHAT_COMPLETION_REQUEST: {json.dumps({
+                'timestamp': datetime.now().isoformat(),
+                'method': 'process_natural_language_query',
+                'model': 'gpt-4',
+                'messages': messages,
+                'tools_count': len(self.tools),
+                'tool_choice': 'auto',
+                'user_query': query
+            })}")
+            
             # Use OpenAI to determine which function to call
             response = self.client.chat.completions.create(
                 model="gpt-4",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a financial data analyst. Given a user query about transaction data, 
-                        determine which function to call with appropriate parameters. 
-                        Always provide exact parameter values, don't use placeholders."""
-                    },
-                    {"role": "user", "content": query}
-                ],
+                messages=messages,
                 tools=self.tools,
                 tool_choice="auto"
             )
             
             # Check if the model wants to call a function
             message = response.choices[0].message
+            
+            # Log the response
+            api_logger.info(f"CHAT_COMPLETION_RESPONSE: {json.dumps({
+                'timestamp': datetime.now().isoformat(),
+                'method': 'process_natural_language_query',
+                'success': True,
+                'finish_reason': response.choices[0].finish_reason,
+                'has_tool_calls': hasattr(message, 'tool_calls') and message.tool_calls is not None,
+                'tool_calls': [
+                    {
+                        'function_name': tc.function.name,
+                        'function_args': tc.function.arguments
+                    } for tc in (message.tool_calls or [])
+                ],
+                'message_content': message.content,
+                'usage': {
+                    'prompt_tokens': response.usage.prompt_tokens if response.usage else 'unknown',
+                    'completion_tokens': response.usage.completion_tokens if response.usage else 'unknown',
+                    'total_tokens': response.usage.total_tokens if response.usage else 'unknown'
+                }
+            })}")
             
             if hasattr(message, 'tool_calls') and message.tool_calls:
                 tool_call = message.tool_calls[0]
@@ -172,6 +221,15 @@ class QueryInterface:
                 }
                 
         except Exception as e:
+            # Log the error
+            api_logger.error(f"CHAT_COMPLETION_ERROR: {json.dumps({
+                'timestamp': datetime.now().isoformat(),
+                'method': 'process_natural_language_query',
+                'success': False,
+                'error': str(e),
+                'user_query': query
+            })}")
+            
             print(f"Error processing query: {e}")
             return {
                 "query": query,
@@ -408,31 +466,75 @@ class QueryInterface:
                           function_args: Dict[str, Any], result: Any) -> str:
         """Generate natural language response based on function results."""
         try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": """You are a helpful financial assistant. Based on the user's query and the data provided, 
+                    generate a clear, conversational response that summarizes the findings. 
+                    Include specific numbers and insights. Be concise but informative."""
+                },
+                {
+                    "role": "user", 
+                    "content": f"""
+                    User asked: "{query}"
+                    Function called: {function_name}
+                    Function arguments: {json.dumps(function_args, default=str)}
+                    Results: {json.dumps(result, default=str, indent=2)}
+                    
+                    Please provide a natural language summary of these results.
+                    """
+                }
+            ]
+            
+            # Log the request
+            api_logger.info(f"CHAT_COMPLETION_REQUEST: {json.dumps({
+                'timestamp': datetime.now().isoformat(),
+                'method': '_generate_response',
+                'model': 'gpt-4',
+                'messages': messages,
+                'max_tokens': 500,
+                'user_query': query,
+                'function_name': function_name,
+                'function_args': function_args
+            })}")
+            
             response = self.client.chat.completions.create(
                 model="gpt-4",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a helpful financial assistant. Based on the user's query and the data provided, 
-                        generate a clear, conversational response that summarizes the findings. 
-                        Include specific numbers and insights. Be concise but informative."""
-                    },
-                    {
-                        "role": "user", 
-                        "content": f"""
-                        User asked: "{query}"
-                        Function called: {function_name}
-                        Function arguments: {json.dumps(function_args, default=str)}
-                        Results: {json.dumps(result, default=str, indent=2)}
-                        
-                        Please provide a natural language summary of these results.
-                        """
-                    }
-                ],
+                messages=messages,
                 max_tokens=500
             )
             
-            return response.choices[0].message.content
+            response_content = response.choices[0].message.content
+            
+            # Log the response
+            api_logger.info(f"CHAT_COMPLETION_RESPONSE: {json.dumps({
+                'timestamp': datetime.now().isoformat(),
+                'method': '_generate_response',
+                'success': True,
+                'finish_reason': response.choices[0].finish_reason,
+                'response_content': response_content,
+                'usage': {
+                    'prompt_tokens': response.usage.prompt_tokens if response.usage else 'unknown',
+                    'completion_tokens': response.usage.completion_tokens if response.usage else 'unknown',
+                    'total_tokens': response.usage.total_tokens if response.usage else 'unknown'
+                }
+            })}")
+            
+            return response_content
+            
+        except Exception as e:
+            # Log the error
+            api_logger.error(f"CHAT_COMPLETION_ERROR: {json.dumps({
+                'timestamp': datetime.now().isoformat(),
+                'method': '_generate_response',
+                'success': False,
+                'error': str(e),
+                'user_query': query,
+                'function_name': function_name
+            })}")
+            
+            logger.error(f"Error generating response: {e}")
+            return f"I found the data for your query about {query}, but couldn't generate a proper response. Please check the raw data above."
         
         except Exception as e:
             print(f"Error generating response: {e}")

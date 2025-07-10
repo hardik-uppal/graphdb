@@ -540,13 +540,7 @@ elif page == "🕸️ Graph Explorer":
         # Build/load graph
         if not graph_service.graph.nodes():
             with st.spinner("Building transaction graph..."):
-                try:
-                    graph_service.build_graph_from_transactions(transactions, db)
-                    st.success("Graph built successfully!")
-                except Exception as e:
-                    st.error(f"Error building graph: {str(e)}")
-                    st.info("Graph visualization will be skipped.")
-                    st.stop()
+                graph_service.build_graph_from_transactions(transactions, db)
         
         # Graph statistics
         stats = graph_service.get_graph_statistics()
@@ -692,30 +686,25 @@ elif page == "📈 Analytics":
         
         if st.button("Detect Anomalous Transactions"):
             with st.spinner("Analyzing transaction patterns..."):
-                try:
-                    anomalies = query_interface.detect_anomalies(db, threshold=90)
-                    
-                    if anomalies:
-                        st.warning(f"Found {len(anomalies)} potentially anomalous transactions:")
-                        
-                        anomaly_data = []
-                        for anomaly in anomalies:
-                            anomaly_data.append({
-                                'Date': anomaly['date'],
-                                'Amount': f"${anomaly['amount']:.2f}",
-                                'Type': anomaly['transaction_type'],
-                                'Merchant': anomaly['merchant'],
-                                'Reason': anomaly['reason']
-                            })
-                        
-                        df_anomalies = pd.DataFrame(anomaly_data)
-                        st.dataframe(df_anomalies, use_container_width=True)
-                    else:
-                        st.success("No anomalous transactions detected!")
-                        
-                except Exception as e:
-                    st.error(f"Error detecting anomalies: {str(e)}")
-                    st.info("Please check the data and try again.")
+                anomalies = query_interface.detect_anomalies(db, threshold=90)
+            
+            if anomalies:
+                st.warning(f"Found {len(anomalies)} potentially anomalous transactions:")
+                
+                anomaly_data = []
+                for anomaly in anomalies:
+                    anomaly_data.append({
+                        'Date': anomaly['date'],
+                        'Amount': f"${anomaly['amount']:.2f}",
+                        'Type': anomaly['transaction_type'],
+                        'Merchant': anomaly['merchant'],
+                        'Reason': anomaly['reason']
+                    })
+                
+                df_anomalies = pd.DataFrame(anomaly_data)
+                st.dataframe(df_anomalies, use_container_width=True)
+            else:
+                st.success("No anomalous transactions detected!")
         
         # Time series analysis
         st.subheader("Spending Patterns Over Time")
