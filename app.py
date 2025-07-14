@@ -532,54 +532,64 @@ elif page == "🕸️ Graph Explorer":
     if st.button("🏠 Home", key="back_home_graph"):
         navigate_to("🏠 Home")
     
-    # Import enhanced services
-    try:
-        from src.enhanced_graph_service import EnhancedGraphService
-        from src.enhanced_graph_visualizer import EnhancedGraphVisualizer
-        
-        # Initialize enhanced services
-        enhanced_graph_service = EnhancedGraphService()
-        visualizer = EnhancedGraphVisualizer()
-        
-    except Exception as e:
-        st.error(f"Error importing enhanced graph services: {str(e)}")
-        st.info("Falling back to basic graph functionality.")
-        enhanced_graph_service = None
-        visualizer = None
-    
     transactions = db.query(Transaction).all()
     
     if not transactions:
         st.warning("No transactions found. Please run the data loading script first.")
     else:
-        # Mode selection
-        graph_mode = st.radio(
-            "Choose Graph Mode:",
-            ["Enhanced Analytics", "Basic View", "Pattern Analysis"],
-            help="Enhanced Analytics provides rich node features and pattern detection"
+        # Initialize enhanced graph service
+        from src.enhanced_graph_service import EnhancedGraphService
+        from src.enhanced_graph_visualizer import EnhancedGraphVisualizer
+        
+        enhanced_graph_service = EnhancedGraphService()
+        enhanced_visualizer = EnhancedGraphVisualizer()
+        
+        # Controls
+        st.sidebar.subheader("Graph Controls")
+        
+        # Limit transactions for performance
+        max_transactions = st.sidebar.slider("Max Transactions", 50, 200, 100)
+        sample_transactions = transactions[:max_transactions]
+        
+        layout_type = st.sidebar.selectbox(
+            "Layout Algorithm",
+            ["spring", "kamada_kawai", "circular", "community"]
         )
         
-        if graph_mode == "Enhanced Analytics" and enhanced_graph_service:
-            # Enhanced graph analytics
-            if not enhanced_graph_service.graph.nodes():
-                with st.spinner("Building enhanced transaction graph with AI features..."):
-                    try:
-                        enhanced_graph_service.build_enhanced_graph(transactions, db)
-                        st.success("✨ Enhanced graph built successfully with AI-powered insights!")
-                    except Exception as e:
-                        st.error(f"Error building enhanced graph: {str(e)}")
-                        st.info("Falling back to basic graph view.")
-                        graph_mode = "Basic View"
+        color_by = st.sidebar.selectbox(
+            "Color Nodes By",
+            ["category", "amount", "pattern", "time"]
+        )
+        
+        size_by = st.sidebar.selectbox(
+            "Size Nodes By", 
+            ["amount", "frequency", "centrality"]
+        )
+        
+        # Build enhanced graph
+        if st.button("🔄 Build Enhanced Graph", type="primary"):
+            with st.spinner("Building enhanced graph with intelligent analytics..."):
+                try:
+                    enhanced_graph_service.build_enhanced_graph(sample_transactions, db)
+                    st.success(f"Enhanced graph built with {enhanced_graph_service.graph.number_of_nodes()} nodes!")
+                    st.session_state.enhanced_graph_built = True
+                except Exception as e:
+                    st.error(f"Error building enhanced graph: {str(e)}")
+                    st.session_state.enhanced_graph_built = False
+        
+        # Show graph if built
+        if getattr(st.session_state, 'enhanced_graph_built', False) and enhanced_graph_service.graph.nodes():
             
-            if enhanced_graph_service.graph.nodes() and graph_mode == "Enhanced Analytics":
-                # Get comprehensive insights
+            # Enhanced statistics
+            st.subheader("📊 Enhanced Graph Analytics")
+            
+            try:
                 insights = enhanced_graph_service.get_graph_insights()
                 
-                # Display enhanced statistics
-                st.subheader("📊 Enhanced Graph Statistics")
+                # Basic stats
+                basic_stats = insights.get('basic_stats', {})
                 col1, col2, col3, col4 = st.columns(4)
                 
-                basic_stats = insights.get('basic_stats', {})
                 with col1:
                     st.metric("Nodes", basic_stats.get('nodes', 0))
                 with col2:
@@ -589,190 +599,121 @@ elif page == "🕸️ Graph Explorer":
                 with col4:
                     st.metric("Components", basic_stats.get('connected_components', 0))
                 
-                # Enhanced interactive graph
-                st.subheader("🕸️ Interactive Enhanced Graph")
-                try:
+                # Pattern insights
+                detected_patterns = insights.get('detected_patterns', [])
+                if detected_patterns:
+                    st.subheader("🔍 Detected Spending Patterns")
+                    
+                    pattern_df = pd.DataFrame([
+                        {
+                            'Pattern': p['pattern_name'],
+                            'Type': p['pattern_type'],
+                            'Confidence': f"{p['confidence']:.2f}",
+                            'Transactions': p['transaction_count'],
+                            'Description': p['description']
+                        }
+                        for p in detected_patterns[:10]  # Show top 10
+                    ])
+                    
+                    st.dataframe(pattern_df, use_container_width=True)
+                
+                # Category and merchant insights
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("📈 Category Distribution")
+                    category_dist = insights.get('category_distribution', {})
+                    if category_dist:
+                        fig_cat = px.pie(
+                            values=list(category_dist.values()),
+                            names=list(category_dist.keys()),
+                            title="Transaction Categories"
+                        )
+                        fig_cat.update_layout(height=300)
+                        st.plotly_chart(fig_cat, use_container_width=True)
+                
+                with col2:
+                    st.subheader("🛒 Spending Patterns")
+                    pattern_dist = insights.get('spending_patterns', {})
+                    if pattern_dist:
+                        fig_pattern = px.bar(
+                            x=list(pattern_dist.keys()),
+                            y=list(pattern_dist.values()),
+                            title="Spending Pattern Distribution"
+                        )
+                        fig_pattern.update_layout(height=300)
+                        st.plotly_chart(fig_pattern, use_container_width=True)
+                
+                # Temporal insights
+                temporal_insights = insights.get('temporal_insights', {})
+                if temporal_insights:
+                    st.subheader("⏰ Temporal Analysis")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Weekend Transactions", temporal_insights.get('weekend_transactions', 0))
+                    with col2:
+                        st.metric("Weekday Transactions", temporal_insights.get('weekday_transactions', 0))
+                    with col3:
+                        weekend_ratio = temporal_insights.get('weekend_ratio', 0)
+                        st.metric("Weekend Ratio", f"{weekend_ratio:.1%}")
+                
+                # Merchant insights
+                merchant_insights = insights.get('merchant_insights', {})
+                if merchant_insights:
+                    st.subheader("🏪 Top Merchants")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**By Frequency:**")
+                        top_freq = merchant_insights.get('top_by_frequency', [])
+                        for merchant, count in top_freq[:5]:
+                            st.write(f"• {merchant[:30]}...: {count} transactions")
+                    
+                    with col2:
+                        st.write("**By Amount:**")
+                        top_amount = merchant_insights.get('top_by_amount', [])
+                        for merchant, amount in top_amount[:5]:
+                            st.write(f"• {merchant[:30]}...: ${amount:.2f}")
+                
+            except Exception as e:
+                st.error(f"Error generating insights: {str(e)}")
+            
+            # Enhanced visualization
+            st.subheader("🎨 Enhanced Graph Visualization")
+            
+            try:
+                fig = enhanced_visualizer.create_enhanced_visualization(
+                    enhanced_graph_service,
+                    layout_type=layout_type,
+                    color_by=color_by,
+                    size_by=size_by
+                )
+                
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Could not generate visualization")
+                    
+            except Exception as e:
+                st.error(f"Visualization error: {str(e)}")
+                st.info("Using fallback basic visualization...")
+                
+                # Fallback to basic visualization
+                if enhanced_graph_service.graph.nodes():
                     G = enhanced_graph_service.graph
                     
-                    # Limit nodes for performance on mobile
-                    max_nodes = st.slider("Max nodes to display", 20, min(100, G.number_of_nodes()), 50)
-                    
-                    if G.number_of_nodes() > max_nodes:
-                        # Select most central nodes
-                        centrality = {node: data.get('centrality_score', 0) 
-                                    for node, data in G.nodes(data=True)}
-                        top_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:max_nodes]
-                        display_nodes = [node for node, _ in top_nodes]
-                        G_display = G.subgraph(display_nodes)
-                    else:
-                        G_display = G
-                    
-                    # Create enhanced visualization
-                    if visualizer:
-                        enhanced_fig = visualizer.create_interactive_graph(
-                            G_display, 
-                            f"Enhanced Transaction Network ({G_display.number_of_nodes()} nodes)"
-                        )
-                        st.plotly_chart(enhanced_fig, use_container_width=True)
-                    
-                except Exception as e:
-                    st.error(f"Error creating enhanced visualization: {str(e)}")
-                
-                # Category and pattern analysis
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("📋 Category Distribution")
-                    category_dist = insights.get('category_distribution', {})
-                    if category_dist and visualizer:
-                        cat_fig = visualizer.create_category_distribution_chart(category_dist)
-                        st.plotly_chart(cat_fig, use_container_width=True)
-                    else:
-                        st.info("No category data available")
-                
-                with col2:
-                    st.subheader("🔄 Spending Patterns")
-                    pattern_dist = insights.get('spending_patterns', {})
-                    if pattern_dist and visualizer:
-                        pattern_fig = visualizer.create_spending_patterns_chart(pattern_dist)
-                        st.plotly_chart(pattern_fig, use_container_width=True)
-                    else:
-                        st.info("No pattern data available")
-                
-                # Detected patterns section
-                st.subheader("🎯 Detected Transaction Patterns")
-                detected_patterns = insights.get('detected_patterns', [])
-                
-                if detected_patterns:
-                    # Pattern visualization
-                    if visualizer:
-                        pattern_fig = visualizer.create_pattern_analysis_chart(enhanced_graph_service.detected_patterns)
-                        st.plotly_chart(pattern_fig, use_container_width=True)
-                    
-                    # Pattern details
-                    st.subheader("📝 Pattern Details")
-                    for i, pattern in enumerate(detected_patterns[:5]):  # Show top 5
-                        with st.expander(f"🔍 {pattern['pattern_name']} (Confidence: {pattern['confidence']:.2f})"):
-                            st.write(f"**Type:** {pattern['pattern_type'].title()}")
-                            st.write(f"**Description:** {pattern['description']}")
-                            st.write(f"**Transactions involved:** {pattern['transaction_count']}")
-                            st.write(f"**Confidence Score:** {pattern['confidence']:.3f}")
-                else:
-                    st.info("No significant patterns detected in the current dataset.")
-                
-                # Temporal and merchant insights
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("⏰ Temporal Insights")
-                    temporal_data = insights.get('temporal_insights', {})
-                    if temporal_data and visualizer:
-                        temporal_fig = visualizer.create_temporal_insights_chart(temporal_data)
-                        st.plotly_chart(temporal_fig, use_container_width=True)
-                
-                with col2:
-                    st.subheader("🏪 Merchant Insights")
-                    merchant_data = insights.get('merchant_insights', {})
-                    if merchant_data and visualizer:
-                        merchant_fig = visualizer.create_merchant_insights_chart(merchant_data)
-                        st.plotly_chart(merchant_fig, use_container_width=True)
-        
-        elif graph_mode == "Pattern Analysis" and enhanced_graph_service:
-            # Dedicated pattern analysis
-            st.subheader("🎯 Advanced Pattern Analysis")
-            
-            if not enhanced_graph_service.detected_patterns:
-                with st.spinner("Analyzing transaction patterns..."):
-                    try:
-                        patterns = enhanced_graph_service.detect_transaction_patterns(transactions)
-                        st.success(f"Detected {len(patterns)} transaction patterns!")
-                    except Exception as e:
-                        st.error(f"Error detecting patterns: {str(e)}")
-                        patterns = []
-            else:
-                patterns = enhanced_graph_service.detected_patterns
-            
-            if patterns:
-                # Pattern type filter
-                pattern_types = list(set(p.pattern_type for p in patterns))
-                selected_type = st.selectbox("Filter by pattern type:", ["All"] + pattern_types)
-                
-                filtered_patterns = patterns
-                if selected_type != "All":
-                    filtered_patterns = [p for p in patterns if p.pattern_type == selected_type]
-                
-                # Display patterns
-                for pattern in filtered_patterns:
-                    with st.expander(f"📊 {pattern.pattern_name}"):
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.write(f"**Type:** {pattern.pattern_type.title()}")
-                            st.write(f"**Confidence:** {pattern.confidence:.3f}")
-                            st.write(f"**Transactions:** {len(pattern.transactions)}")
-                        
-                        with col2:
-                            st.write(f"**Description:** {pattern.description}")
-                            
-                            # Show key features
-                            if pattern.key_features:
-                                st.write("**Key Features:**")
-                                for key, value in pattern.key_features.items():
-                                    if isinstance(value, (int, float)):
-                                        if key.endswith('_ratio') or key.endswith('_score'):
-                                            st.write(f"- {key}: {value:.3f}")
-                                        elif key.startswith('avg_') and 'amount' in key:
-                                            st.write(f"- {key}: ${value:.2f}")
-                                        else:
-                                            st.write(f"- {key}: {value}")
-                                    else:
-                                        st.write(f"- {key}: {value}")
-            else:
-                st.info("No patterns detected. Try with more transaction data.")
-        
-        else:
-            # Basic graph view (fallback)
-            st.subheader("📊 Basic Graph Statistics")
-            
-            # Build basic graph if needed
-            if not graph_service.graph.nodes():
-                with st.spinner("Building transaction graph..."):
-                    try:
-                        graph_service.build_graph_from_transactions(transactions, db)
-                        st.success("Graph built successfully!")
-                    except Exception as e:
-                        st.error(f"Error building graph: {str(e)}")
-                        st.stop()
-            
-            # Basic statistics
-            try:
-                stats = graph_service.get_graph_statistics()
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Nodes", stats.get('nodes', 0))
-                with col2:
-                    st.metric("Edges", stats.get('edges', 0))
-                with col3:
-                    st.metric("Density", f"{stats.get('density', 0):.3f}")
-                
-                # Basic visualization
-                st.subheader("🕸️ Basic Graph Visualization")
-                G = graph_service.graph
-                
-                if G.number_of_nodes() > 0:
                     # Sample for performance
-                    max_nodes = min(50, G.number_of_nodes())
-                    if G.number_of_nodes() > max_nodes:
-                        sample_nodes = list(G.nodes())[:max_nodes]
+                    if G.number_of_nodes() > 50:
+                        sample_nodes = list(G.nodes())[:50]
                         G_sample = G.subgraph(sample_nodes)
                     else:
                         G_sample = G
                     
-                    # Create basic layout
-                    pos = nx.spring_layout(G_sample, k=1, iterations=50)
+                    pos = nx.spring_layout(G_sample, k=1, iterations=30)
                     
-                    # Prepare basic visualization data
+                    # Basic plotly visualization
                     edge_x, edge_y = [], []
                     for edge in G_sample.edges():
                         x0, y0 = pos[edge[0]]
@@ -780,109 +721,55 @@ elif page == "🕸️ Graph Explorer":
                         edge_x.extend([x0, x1, None])
                         edge_y.extend([y0, y1, None])
                     
-                    node_x, node_y, node_text, node_color = [], [], [], []
+                    node_x, node_y, node_text = [], [], []
                     for node in G_sample.nodes():
                         x, y = pos[node]
                         node_x.append(x)
                         node_y.append(y)
                         
-                        transaction = next((t for t in transactions if t.id == node), None)
-                        if transaction:
-                            node_text.append(f"ID: {transaction.id}<br>Amount: ${transaction.amount}<br>Type: {transaction.transaction_type}")
-                            node_color.append(transaction.amount)
-                        else:
-                            node_text.append(f"ID: {node}")
-                            node_color.append(0)
+                        node_data = G_sample.nodes[node]
+                        node_text.append(f"ID: {node}<br>Category: {node_data.get('category', 'Unknown')}")
                     
-                    # Create basic figure
-                    fig = go.Figure()
+                    fig_basic = go.Figure()
                     
-                    fig.add_trace(go.Scatter(
+                    # Add edges
+                    fig_basic.add_trace(go.Scatter(
                         x=edge_x, y=edge_y,
-                        line=dict(width=1, color='lightgray'),
+                        line=dict(width=0.5, color='#888'),
                         hoverinfo='none',
-                        mode='lines'
+                        mode='lines',
+                        showlegend=False
                     ))
                     
-                    fig.add_trace(go.Scatter(
+                    # Add nodes
+                    fig_basic.add_trace(go.Scatter(
                         x=node_x, y=node_y,
                         mode='markers',
                         hoverinfo='text',
                         text=node_text,
-                        marker=dict(
-                            size=8,
-                            color=node_color,
-                            colorscale='RdBu',
-                            showscale=True,
-                            colorbar=dict(title="Amount")
-                        )
+                        marker=dict(size=10, color='lightblue'),
+                        showlegend=False
                     ))
                     
-                    fig.update_layout(
-                        title="Basic Transaction Graph Network",
+                    fig_basic.update_layout(
+                        title="Transaction Network (Basic View)",
                         showlegend=False,
                         hovermode='closest',
                         margin=dict(b=20,l=5,r=5,t=40),
-                        height=400,
+                        annotations=[dict(
+                            text="Basic graph visualization",
+                            showarrow=False,
+                            xref="paper", yref="paper",
+                            x=0.005, y=-0.002
+                        )],
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-            except Exception as e:
-                st.error(f"Error in basic graph view: {str(e)}")
+                    st.plotly_chart(fig_basic, use_container_width=True)
         
-        # Graph insights and recommendations
-        st.markdown("---")
-        st.subheader("💡 Graph Insights & Recommendations")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            **🔍 What the Graph Shows:**
-            - **Nodes**: Individual transactions with enhanced labels
-            - **Colors**: Spending categories (grocery, restaurant, etc.)
-            - **Size**: Transaction amounts (larger = higher amount)
-            - **Connections**: Relationships between transactions
-            """)
-        
-        with col2:
-            st.markdown("""
-            **🎯 How to Use:**
-            - Hover over nodes for detailed transaction info
-            - Look for clusters of same-colored nodes (spending patterns)
-            - Large nodes indicate significant transactions
-            - Dense connections show related spending
-            """)
-            
-        if graph_mode == "Enhanced Analytics":
-            st.info("💡 **Pro Tip**: The enhanced analytics mode provides AI-powered pattern detection, "
-                   "semantic similarity connections, and intelligent categorization for deeper insights!")
-        
-        # Quick actions
-        st.markdown("### 🚀 Quick Actions")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🔄 Rebuild Graph", help="Rebuild the graph with latest data"):
-                if enhanced_graph_service:
-                    enhanced_graph_service.graph.clear()
-                graph_service.graph.clear()
-                st.success("Graph cleared! Refresh to rebuild.")
-        
-        with col2:
-            if st.button("💾 Export Insights", help="Export graph insights as JSON"):
-                if enhanced_graph_service and enhanced_graph_service.graph.nodes():
-                    insights = enhanced_graph_service.get_graph_insights()
-                    st.json(insights)
-                else:
-                    st.info("Enhanced graph not available for export")
-        
-        with col3:
-            if st.button("📊 Generate Report", help="Generate detailed graph analysis report"):
-                st.info("Report generation feature coming soon!")
+        else:
+            st.info("Click 'Build Enhanced Graph' to start analyzing your transaction patterns with AI-powered insights!")
 
 elif page == "🔍 Transaction Search":
     st.title("🔍 Semantic Transaction Search")

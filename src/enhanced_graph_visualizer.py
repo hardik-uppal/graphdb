@@ -3,8 +3,10 @@ import plotly.express as px
 import networkx as nx
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 import colorsys
+from collections import defaultdict
+import math
 
 class EnhancedGraphVisualizer:
     """Enhanced visualization for transaction graphs with better representations."""
@@ -451,6 +453,346 @@ class EnhancedGraphVisualizer:
         
         return fig
     
+    def create_enhanced_visualization(self, graph_service, 
+                                    layout_type: str = "spring",
+                                    color_by: str = "category",
+                                    size_by: str = "amount",
+                                    filter_patterns: List[str] = None) -> go.Figure:
+        """Create enhanced graph visualization with intelligent layouts and coloring."""
+        
+        if not graph_service.graph.nodes():
+            return self._create_empty_graph_message()
+        
+        # Get layout positions
+        pos = self._calculate_layout(graph_service.graph, layout_type)
+        
+        # Prepare node data with enhanced attributes
+        node_data = self._prepare_enhanced_node_data(graph_service, pos, color_by, size_by, filter_patterns)
+        
+        # Prepare edge data
+        edge_data = self._prepare_enhanced_edge_data(graph_service, pos)
+        
+        # Create the figure
+        fig = go.Figure()
+        
+        # Add edges with varying weights and colors
+        self._add_enhanced_edges(fig, edge_data)
+        
+        # Add nodes with intelligent coloring and sizing
+        fig.add_trace(go.Scatter(
+            x=node_data['x'],
+            y=node_data['y'],
+            mode='markers+text',
+            marker=dict(
+                size=node_data['sizes'],
+                color=node_data['colors'],
+                line=dict(width=1, color='white'),
+                opacity=0.8,
+                colorscale='Viridis' if color_by == 'amount' else None,
+                showscale=color_by == 'amount'
+            ),
+            text=node_data['labels'],
+            textposition="middle center",
+            textfont=dict(size=8, color='white'),
+            hovertext=node_data['hover_texts'],
+            hoverinfo='text',
+            showlegend=False,
+            name='Transactions'
+        ))
+        
+        # Create legend if applicable
+        self._add_color_legend(fig, color_by, node_data.get('legend_data', {}))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=f"Enhanced Transaction Graph - Colored by {color_by.title()}",
+                font=dict(size=16)
+            ),
+            showlegend=True,
+            hovermode='closest',
+            margin=dict(b=20,l=5,r=5,t=40),
+            annotations=[
+                dict(
+                    text=f"Nodes: {len(node_data['x'])} | Edges: {graph_service.graph.number_of_edges()}",
+                    showarrow=False,
+                    xref="paper", yref="paper",
+                    x=0.005, y=-0.002,
+                    xanchor='left', yanchor='bottom',
+                    font=dict(size=12)
+                )
+            ],
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            plot_bgcolor='white',
+            height=600
+        )
+        
+        return fig
+    
+    def _calculate_layout(self, graph: nx.Graph, layout_type: str) -> Dict[int, Tuple[float, float]]:
+        """Calculate node positions using various layout algorithms."""
+        
+        if layout_type == "spring":
+            return nx.spring_layout(graph, k=3, iterations=50)
+        elif layout_type == "kamada_kawai":
+            try:
+                return nx.kamada_kawai_layout(graph)
+            except:
+                return nx.spring_layout(graph, k=3, iterations=50)
+        elif layout_type == "circular":
+            return nx.circular_layout(graph)
+        elif layout_type == "community":
+            return self._community_based_layout(graph)
+        else:
+            return nx.spring_layout(graph, k=3, iterations=50)
+    
+    def _community_based_layout(self, graph: nx.Graph) -> Dict[int, Tuple[float, float]]:
+        """Create layout based on community structure."""
+        try:
+            import community as community_louvain
+            communities = community_louvain.best_partition(graph)
+            
+            # Group nodes by community
+            from collections import defaultdict
+            import math
+            community_groups = defaultdict(list)
+            for node, community in communities.items():
+                community_groups[community].append(node)
+            
+            pos = {}
+            num_communities = len(community_groups)
+            
+            for i, (community, nodes) in enumerate(community_groups.items()):
+                # Position communities in a circle
+                angle = 2 * math.pi * i / num_communities
+                center_x = 3 * math.cos(angle)
+                center_y = 3 * math.sin(angle)
+                
+                # Layout nodes within each community
+                subgraph = graph.subgraph(nodes)
+                if len(nodes) > 1:
+                    sub_pos = nx.spring_layout(subgraph, center=(center_x, center_y), k=0.5)
+                else:
+                    sub_pos = {nodes[0]: (center_x, center_y)}
+                
+                pos.update(sub_pos)
+            
+            return pos
+            
+        except ImportError:
+            print("Community layout requires python-louvain package, falling back to spring layout")
+            return nx.spring_layout(graph, k=3, iterations=50)
+    
+    def _prepare_enhanced_node_data(self, graph_service, pos: Dict, 
+                                  color_by: str, size_by: str, filter_patterns: List[str] = None) -> Dict:
+        """Prepare enhanced node data for visualization."""
+        
+        node_data = {
+            'x': [], 'y': [], 'colors': [], 'sizes': [], 
+            'labels': [], 'hover_texts': [], 'legend_data': {}
+        }
+        
+        # Color schemes
+        color_schemes = {
+            'category': {
+                'Grocery': '#2E8B57', 'Restaurant': '#FF6347', 'Gas': '#4169E1',
+                'Retail': '#9370DB', 'Healthcare': '#DC143C', 'Entertainment': '#FF1493',
+                'Transportation': '#00CED1', 'Utilities': '#8B4513', 'Financial': '#DAA520',
+                'Other': '#696969'
+            },
+            'pattern': {
+                'Regular/Recurring': '#2E8B57', 'Frequent/Irregular': '#FFD700',
+                'Occasional': '#87CEEB', 'Large/Unusual': '#FF6347', 
+                'Infrequent': '#D3D3D3', 'Isolated': '#A9A9A9'
+            }
+        }
+        
+        for node_id in graph_service.graph.nodes():
+            if node_id not in pos:
+                continue
+                
+            node_attrs = graph_service.graph.nodes[node_id]
+            
+            # Apply filters if specified
+            if filter_patterns and node_attrs.get('spending_pattern') not in filter_patterns:
+                continue
+            
+            # Position
+            x, y = pos[node_id]
+            node_data['x'].append(x)
+            node_data['y'].append(y)
+            
+            # Color based on scheme
+            if color_by == 'category':
+                category = node_attrs.get('category', 'Other')
+                color = color_schemes['category'].get(category, '#696969')
+            elif color_by == 'pattern':
+                pattern = node_attrs.get('spending_pattern', 'Isolated')
+                color = color_schemes['pattern'].get(pattern, '#A9A9A9')
+            elif color_by == 'amount':
+                # Use numerical value for amount-based coloring
+                amount_bucket = node_attrs.get('amount_bucket', 'Small ($10-50)')
+                if 'Micro' in amount_bucket:
+                    color = 1
+                elif 'Small' in amount_bucket:
+                    color = 2
+                elif 'Medium' in amount_bucket:
+                    color = 3
+                elif 'Large' in amount_bucket:
+                    color = 4
+                else:  # XLarge
+                    color = 5
+            else:
+                color = '#87CEEB'
+            
+            node_data['colors'].append(color)
+            
+            # Size based on scheme
+            if size_by == 'amount':
+                amount_bucket = node_attrs.get('amount_bucket', 'Small ($10-50)')
+                if 'Micro' in amount_bucket:
+                    size = 8
+                elif 'Small' in amount_bucket:
+                    size = 12
+                elif 'Medium' in amount_bucket:
+                    size = 16
+                elif 'Large' in amount_bucket:
+                    size = 20
+                else:  # XLarge
+                    size = 25
+            elif size_by == 'frequency':
+                frequency = node_attrs.get('frequency_score', 0)
+                size = max(8, min(25, 8 + frequency * 100))
+            else:
+                size = 12
+            
+            node_data['sizes'].append(size)
+            
+            # Label and hover text
+            label = node_attrs.get('display_label', f'Transaction {node_id}')
+            # Truncate label for display
+            if '\n' in label:
+                lines = label.split('\n')
+                if len(lines[0]) > 12:
+                    label = lines[0][:10] + '...'
+                else:
+                    label = lines[0]
+            
+            node_data['labels'].append(label)
+            
+            # Detailed hover text
+            hover_text = f"<b>{node_attrs.get('merchant', 'Unknown')}</b><br>"
+            hover_text += f"Category: {node_attrs.get('category', 'Unknown')}<br>"
+            hover_text += f"Amount: {node_attrs.get('amount_bucket', 'Unknown')}<br>"
+            hover_text += f"Pattern: {node_attrs.get('spending_pattern', 'Unknown')}<br>"
+            hover_text += f"Time: {node_attrs.get('time_bucket', 'Unknown')}"
+            
+            node_data['hover_texts'].append(hover_text)
+        
+        return node_data
+    
+    def _prepare_enhanced_edge_data(self, graph_service, pos: Dict) -> Dict:
+        """Prepare enhanced edge data for visualization."""
+        
+        edge_data = {'traces': []}
+        
+        # Group edges by type for different styling
+        edge_types = {'similarity': [], 'temporal': [], 'merchant': [], 'pattern': []}
+        
+        for edge in graph_service.graph.edges(data=True):
+            source, target, attrs = edge
+            
+            if source not in pos or target not in pos:
+                continue
+            
+            edge_type = attrs.get('edge_type', 'unknown')
+            weight = attrs.get('weight', 0.5)
+            
+            x0, y0 = pos[source]
+            x1, y1 = pos[target]
+            
+            edge_info = {
+                'x': [x0, x1, None],
+                'y': [y0, y1, None],
+                'weight': weight,
+                'label': attrs.get('label', f'{edge_type} edge')
+            }
+            
+            if edge_type in edge_types:
+                edge_types[edge_type].append(edge_info)
+        
+        edge_data['edge_types'] = edge_types
+        return edge_data
+    
+    def _add_enhanced_edges(self, fig: go.Figure, edge_data: Dict):
+        """Add enhanced edges with different colors and weights."""
+        
+        edge_colors = {
+            'similarity': 'rgba(255, 100, 100, 0.6)',
+            'temporal': 'rgba(100, 255, 100, 0.6)',
+            'merchant': 'rgba(100, 100, 255, 0.6)',
+            'pattern': 'rgba(255, 100, 255, 0.6)'
+        }
+        
+        edge_types = edge_data.get('edge_types', {})
+        
+        for edge_type, edges in edge_types.items():
+            if not edges:
+                continue
+            
+            x_coords = []
+            y_coords = []
+            
+            for edge in edges:
+                x_coords.extend(edge['x'])
+                y_coords.extend(edge['y'])
+            
+            fig.add_trace(go.Scatter(
+                x=x_coords,
+                y=y_coords,
+                mode='lines',
+                line=dict(
+                    width=1,
+                    color=edge_colors.get(edge_type, 'rgba(128,128,128,0.3)')
+                ),
+                hoverinfo='none',
+                showlegend=True,
+                name=f'{edge_type.title()} Connections',
+                legendgroup=edge_type
+            ))
+    
+    def _add_color_legend(self, fig: go.Figure, color_by: str, legend_data: Dict):
+        """Add legend based on coloring scheme."""
+        
+        if color_by == 'category':
+            categories = ['Grocery', 'Restaurant', 'Gas', 'Retail', 'Other']
+            colors = ['#2E8B57', '#FF6347', '#4169E1', '#9370DB', '#696969']
+            
+            for category, color in zip(categories, colors):
+                fig.add_trace(go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(size=10, color=color),
+                    showlegend=True,
+                    name=category,
+                    legendgroup='categories'
+                ))
+        
+        elif color_by == 'pattern':
+            patterns = ['Regular/Recurring', 'Frequent/Irregular', 'Occasional', 'Infrequent']
+            colors = ['#2E8B57', '#FFD700', '#87CEEB', '#D3D3D3']
+            
+            for pattern, color in zip(patterns, colors):
+                fig.add_trace(go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(size=10, color=color),
+                    showlegend=True,
+                    name=pattern,
+                    legendgroup='patterns'
+                ))
+
     def _create_empty_graph_message(self) -> go.Figure:
         """Create an empty graph with message."""
         fig = go.Figure()
